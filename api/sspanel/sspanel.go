@@ -440,7 +440,7 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 	enableVless := c.EnableVless
 	vlessFlow := c.VlessFlow
 	realityConfig := new(api.REALITYConfig)
-	var realityDest, realityPrivateKey, realityPublicKey string
+	var realityDest, realityPrivateKey string
 	var realityServerNames, realityShortIds []string
 	var realityProxyProtocolVer uint64
 	var relayServer, outsidePort string
@@ -516,8 +516,6 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 			}
 		case "flow":
 			vlessFlow = value
-		case "publicKey":
-			realityPublicKey = value
 		case "privateKey":
 			realityPrivateKey = value
 		case "shortId", "shortIds":
@@ -553,9 +551,6 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 	}
 
 	if enableREALITY {
-		if realityPrivateKey == "" && realityPublicKey != "" {
-			realityPrivateKey = realityPublicKey
-		}
 		if realityDest == "" {
 			switch {
 			case relayServer != "" && outsidePort != "":
