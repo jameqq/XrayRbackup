@@ -192,10 +192,21 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 
 	// Build TLS and REALITY settings
 	var isREALITY bool
-	// Prefer panel-provided REALITY settings; do not fall back to config.yml keys.
-	if nodeInfo.REALITYConfig != nil && nodeInfo.EnableREALITY {
+	if nodeInfo.EnableREALITY {
 		r := nodeInfo.REALITYConfig
-		if r.Dest != "" && r.PrivateKey != "" {
+		if (r == nil || r.PrivateKey == "" || r.Dest == "") && !config.DisableLocalREALITYConfig && config.EnableREALITY && config.REALITYConfigs != nil {
+			r = &api.REALITYConfig{
+				Dest:             config.REALITYConfigs.Dest,
+				ProxyProtocolVer: config.REALITYConfigs.ProxyProtocolVer,
+				ServerNames:      config.REALITYConfigs.ServerNames,
+				PrivateKey:       config.REALITYConfigs.PrivateKey,
+				MinClientVer:     config.REALITYConfigs.MinClientVer,
+				MaxClientVer:     config.REALITYConfigs.MaxClientVer,
+				MaxTimeDiff:      config.REALITYConfigs.MaxTimeDiff,
+				ShortIds:         config.REALITYConfigs.ShortIds,
+			}
+		}
+		if r != nil && r.Dest != "" && r.PrivateKey != "" {
 			isREALITY = true
 			streamSetting.Security = "reality"
 			streamSetting.REALITYSettings = &conf.REALITYConfig{
