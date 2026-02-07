@@ -31,11 +31,17 @@ type InboundInfo struct {
 	NodeSpeedLimit uint64
 	UserInfo       *sync.Map // Key: user tag (buildUserTag) -> UserInfo
 	BucketHub      *sync.Map // Key: user tag -> *rate.Limiter
-	UserOnlineIP   *sync.Map // Key: user tag -> {Key: IP, value: UID}
+	UserOnlineIP   *sync.Map // Key: user tag -> {Key: IP, value: onlineIPEntry}
+	OnlineIPExpiry time.Duration
 	GlobalLimit    struct {
 		config         *GlobalDeviceLimitConfig
 		globalOnlineIP *marshaler.Marshaler
 	}
+}
+
+type onlineIPEntry struct {
+	UID      int
+	LastSeen time.Time
 }
 
 type Limiter struct {
@@ -48,12 +54,13 @@ func New() *Limiter {
 	}
 }
 
-func (l *Limiter) AddInboundLimiter(tag string, nodeSpeedLimit uint64, userList *[]api.UserInfo, globalLimit *GlobalDeviceLimitConfig) error {
+func (l *Limiter) AddInboundLimiter(tag string, nodeSpeedLimit uint64, userList *[]api.UserInfo, globalLimit *GlobalDeviceLimitConfig, onlineIPExpiry time.Duration) error {
 	inboundInfo := &InboundInfo{
 		Tag:            tag,
 		NodeSpeedLimit: nodeSpeedLimit,
 		BucketHub:      new(sync.Map),
 		UserOnlineIP:   new(sync.Map),
+		OnlineIPExpiry: onlineIPExpiry,
 	}
 
 	if globalLimit != nil && globalLimit.Enable {
@@ -129,11 +136,25 @@ func (l *Limiter) DeleteInboundLimiter(tag string) error {
 	return nil
 }
 
+func (l *Limiter) cleanupUserOnlineIPs(inboundInfo *InboundInfo, ipMap *sync.Map, now time.Time) {
+	if inboundInfo.OnlineIPExpiry <= 0 {
+		return
+	}
+	ipMap.Range(func(key, value interface{}) bool {
+		entry := value.(onlineIPEntry)
+		if now.Sub(entry.LastSeen) > inboundInfo.OnlineIPExpiry {
+			ipMap.Delete(key)
+		}
+		return true
+	})
+}
+
 func (l *Limiter) GetOnlineDevice(tag string) (*[]api.OnlineUser, error) {
 	var onlineUser []api.OnlineUser
 
 	if value, ok := l.InboundInfo.Load(tag); ok {
 		inboundInfo := value.(*InboundInfo)
+		now := time.Now()
 		// Clear Speed Limiter bucket for users who are not online
 		inboundInfo.BucketHub.Range(func(key, value interface{}) bool {
 			email := key.(string)
@@ -142,14 +163,23 @@ func (l *Limiter) GetOnlineDevice(tag string) (*[]api.OnlineUser, error) {
 			}
 			return true
 		})
-		inboundInfo.UserOnlineIP.Range(func(_, value interface{}) bool {
+		inboundInfo.UserOnlineIP.Range(func(userKey, value interface{}) bool {
 			ipMap := value.(*sync.Map)
+			l.cleanupUserOnlineIPs(inboundInfo, ipMap, now)
 			ipMap.Range(func(key, value interface{}) bool {
-				uid := value.(int)
+				entry := value.(onlineIPEntry)
 				ip := key.(string)
-				onlineUser = append(onlineUser, api.OnlineUser{UID: uid, IP: ip})
+				onlineUser = append(onlineUser, api.OnlineUser{UID: entry.UID, IP: ip})
 				return true
 			})
+			empty := true
+			ipMap.Range(func(_, _ interface{}) bool {
+				empty = false
+				return false
+			})
+			if empty {
+				inboundInfo.UserOnlineIP.Delete(userKey)
+			}
 			return true
 		})
 	} else {
@@ -177,11 +207,16 @@ func (l *Limiter) GetUserBucket(tag string, userKey string, ip string) (limiter 
 		}
 
 		// Local device limit
+		now := time.Now()
 		ipMap := new(sync.Map)
-		ipMap.Store(ip, uid)
+		ipMap.Store(ip, onlineIPEntry{UID: uid, LastSeen: now})
 		if v, ok := inboundInfo.UserOnlineIP.LoadOrStore(userKey, ipMap); ok {
 			ipMap := v.(*sync.Map)
-			if _, ok := ipMap.LoadOrStore(ip, uid); !ok {
+			l.cleanupUserOnlineIPs(inboundInfo, ipMap, now)
+			if _, loaded := ipMap.Load(ip); loaded {
+				ipMap.Store(ip, onlineIPEntry{UID: uid, LastSeen: now})
+			} else {
+				ipMap.Store(ip, onlineIPEntry{UID: uid, LastSeen: now})
 				counter := 0
 				ipMap.Range(func(key, value interface{}) bool {
 					counter++
