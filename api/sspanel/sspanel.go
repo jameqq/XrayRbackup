@@ -433,10 +433,17 @@ func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 
 // ParseV2rayNodeResponse parse the response for the given node info format
 func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (*api.NodeInfo, error) {
-	var enableTLS bool
-	var path, host, transportProtocol, serviceName, HeaderType string
+	var enableTLS, enableREALITY bool
+	var path, host, transportProtocol, serviceName, HeaderType, sni string
 	var header json.RawMessage
 	var speedLimit uint64 = 0
+	enableVless := c.EnableVless
+	vlessFlow := c.VlessFlow
+	realityConfig := new(api.REALITYConfig)
+	var realityDest, realityPrivateKey string
+	var realityServerNames, realityShortIds []string
+	var realityProxyProtocolVer uint64
+	var relayServer, outsidePort string
 	if nodeInfoResponse.RawServerString == "" {
 		return nil, fmt.Errorf("no server info in response")
 	}
@@ -466,25 +473,66 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 			}
 		}
 	}
-	extraServerConf := strings.Split(serverConf[5], "|")
+	extraServerConf := []string{}
 	serviceName = ""
+	if len(serverConf) > 5 {
+		extraServerConf = strings.Split(serverConf[5], "|")
+	}
 	for _, item := range extraServerConf {
 		conf := strings.Split(item, "=")
+		if len(conf) < 2 {
+			continue
+		}
 		key := conf[0]
 		if key == "" {
 			continue
 		}
-		value := conf[1]
+		value := strings.Join(conf[1:], "=")
 		switch key {
 		case "path":
-			rawPath := strings.Join(conf[1:], "=") // In case of the path strings contains the "="
-			path = rawPath
+			path = value
 		case "host":
 			host = value
+			if sni == "" {
+				sni = value
+			}
+		case "sni":
+			sni = value
 		case "servicename":
 			serviceName = value
 		case "headerType":
 			HeaderType = value
+		case "security":
+			switch strings.ToLower(value) {
+			case "tls", "xtls":
+				enableTLS = true
+			case "reality":
+				enableREALITY = true
+				enableVless = true
+			}
+		case "enable_vless":
+			if value == "1" || strings.EqualFold(value, "true") {
+				enableVless = true
+			}
+		case "flow":
+			vlessFlow = value
+		case "publicKey", "privateKey":
+			realityPrivateKey = value
+		case "shortId", "shortIds":
+			realityShortIds = strings.Split(value, ",")
+		case "dest":
+			realityDest = value
+		case "serverNames", "server_names":
+			realityServerNames = strings.Split(value, ",")
+		case "proxy_protocol_ver", "xver":
+			parsedVer, parseErr := strconv.ParseUint(value, 10, 64)
+			if parseErr == nil {
+				realityProxyProtocolVer = parsedVer
+			}
+		case "relayserver":
+			relayServer = value
+		case "outside_port":
+			outsidePort = value
 		}
 	}
 	if c.SpeedLimit > 0 {
@@ -502,6 +550,29 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 		return nil, fmt.Errorf("marshal Header Type %s into config failed: %s", header, err)
 	}
 
+	if enableREALITY {
+		if realityDest == "" {
+			switch {
+			case relayServer != "" && outsidePort != "":
+				realityDest = fmt.Sprintf("%s:%s", relayServer, outsidePort)
+			case host != "" && strings.Contains(host, ":"):
+				realityDest = host
+			case host != "":
+				realityDest = fmt.Sprintf("%s:443", host)
+			}
+		}
+		if len(realityServerNames) == 0 && host != "" {
+			realityServerNames = []string{host}
+		}
+		realityConfig = &api.REALITYConfig{
+			Dest:             realityDest,
+			ProxyProtocolVer: realityProxyProtocolVer,
+			ServerNames:      realityServerNames,
+			PrivateKey:       realityPrivateKey,
+			ShortIds:         realityShortIds,
+		}
+	}
+
 	// Create GeneralNodeInfo
 	nodeInfo := &api.NodeInfo{
 		NodeType:          c.NodeType,
@@ -513,10 +584,13 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 		EnableTLS:         enableTLS,
 		Path:              path,
 		Host:              host,
-		EnableVless:       c.EnableVless,
-		VlessFlow:         c.VlessFlow,
+		SNI:               sni,
+		EnableVless:       enableVless,
+		VlessFlow:         vlessFlow,
 		ServiceName:       serviceName,
 		Header:            header,
+		EnableREALITY:     enableREALITY,
+		REALITYConfig:     realityConfig,
 	}
 
 	return nodeInfo, nil
