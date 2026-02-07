@@ -440,7 +440,7 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 	enableVless := c.EnableVless
 	vlessFlow := c.VlessFlow
 	realityConfig := new(api.REALITYConfig)
-	var realityDest, realityPrivateKey string
+	var realityDest, realityPrivateKey, realityPublicKey string
 	var realityServerNames, realityShortIds []string
 	var realityProxyProtocolVer uint64
 	var relayServer, outsidePort string
@@ -516,7 +516,9 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 			}
 		case "flow":
 			vlessFlow = value
-		case "publicKey", "privateKey":
+		case "publicKey":
+			realityPublicKey = value
+		case "privateKey":
 			realityPrivateKey = value
 		case "shortId", "shortIds":
 			realityShortIds = strings.Split(value, ",")
@@ -551,6 +553,9 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 	}
 
 	if enableREALITY {
+		if realityPrivateKey == "" && realityPublicKey != "" {
+			realityPrivateKey = realityPublicKey
+		}
 		if realityDest == "" {
 			switch {
 			case relayServer != "" && outsidePort != "":
@@ -573,9 +578,14 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *NodeInfoResponse) (
 		}
 	}
 
+	nodeType := c.NodeType
+	if enableVless && (strings.EqualFold(nodeType, "v2ray") || strings.EqualFold(nodeType, "vmess")) {
+		nodeType = "Vless"
+	}
+
 	// Create GeneralNodeInfo
 	nodeInfo := &api.NodeInfo{
-		NodeType:          c.NodeType,
+		NodeType:          nodeType,
 		NodeID:            c.NodeID,
 		Port:              port,
 		SpeedLimit:        speedLimit,
@@ -882,6 +892,9 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		if nodeConfig.EnableREALITY {
 			enableREALITY = true
 		}
+		if enableREALITY {
+			enableVless = true
+		}
 
 		if nodeConfig.EnableVless == "1" || strings.EqualFold(nodeConfig.EnableVless, "true") {
 			enableVless = true
@@ -929,9 +942,14 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		}
 	}
 
+	nodeType := c.NodeType
+	if enableVless && (strings.EqualFold(nodeType, "v2ray") || strings.EqualFold(nodeType, "vmess")) {
+		nodeType = "Vless"
+	}
+
 	// Create GeneralNodeInfo
 	nodeInfo := &api.NodeInfo{
-		NodeType:            c.NodeType,
+		NodeType:            nodeType,
 		NodeID:              c.NodeID,
 		Port:                port,
 		SpeedLimit:          speedLimit,
