@@ -892,6 +892,9 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		if nodeConfig.EnableREALITY {
 			enableREALITY = true
 		}
+		if enableREALITY {
+			enableVless = true
+		}
 
 		if nodeConfig.EnableVless == "1" || strings.EqualFold(nodeConfig.EnableVless, "true") {
 			enableVless = true
@@ -939,9 +942,14 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		}
 	}
 
+	nodeType := c.NodeType
+	if enableVless && (strings.EqualFold(nodeType, "v2ray") || strings.EqualFold(nodeType, "vmess")) {
+		nodeType = "Vless"
+	}
+
 	// Create GeneralNodeInfo
 	nodeInfo := &api.NodeInfo{
-		NodeType:            c.NodeType,
+		NodeType:            nodeType,
 		NodeID:              c.NodeID,
 		Port:                port,
 		SpeedLimit:          speedLimit,
